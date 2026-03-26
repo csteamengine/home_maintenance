@@ -1,7 +1,7 @@
 """Support for Home Maintenance platform."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 
 from homeassistant.components.binary_sensor import DOMAIN as PLATFORM
@@ -11,6 +11,7 @@ from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_registry import RegistryEntry  # noqa: TC002
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
@@ -25,6 +26,9 @@ from .websocket import async_register_websockets
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = const.CONFIG_SCHEMA
+
+# Check calendar events every 30 minutes
+CALENDAR_CHECK_INTERVAL = timedelta(minutes=30)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001
@@ -50,6 +54,88 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for task in tasks:
             task_id = task["id"]
             store.update_last_performed(task_id)
+
+    @callback
+    def handle_dst_event(event: Event) -> None:
+        """Handle daylight saving time change event to mark DST-triggered tasks as due."""
+        store = hass.data[const.DOMAIN].get("store")
+        if not store:
+            return
+
+        _LOGGER.debug("DST change detected, checking for DST-triggered tasks")
+
+        for task_data in store.get_all():
+            if task_data.get("dst_trigger"):
+                task_id = task_data["id"]
+                entity = hass.data[const.DOMAIN]["entities"].get(task_id)
+                if entity:
+                    # Mark the task as due by setting its binary sensor state
+                    entity.task["_dst_triggered"] = True
+                    hass.async_create_task(
+                        entity.async_update_ha_state(force_refresh=True)
+                    )
+                    _LOGGER.info(
+                        "DST trigger activated for task: %s", task_data.get("title")
+                    )
+
+    async def async_check_calendar_events(now: datetime) -> None:  # noqa: ARG001
+        """Periodically check calendar entities for matching events."""
+        store = hass.data[const.DOMAIN].get("store")
+        if not store:
+            return
+
+        for task_data in store.get_all():
+            calendar_entity = task_data.get("calendar_entity")
+            calendar_keyword = task_data.get("calendar_keyword")
+
+            if not calendar_entity or not calendar_keyword:
+                continue
+
+            # Check if the calendar entity exists
+            state = hass.states.get(calendar_entity)
+            if state is None:
+                continue
+
+            try:
+                # Use the calendar API to get events for the next 7 days
+                start = dt_util.now()
+                end = start + timedelta(days=7)
+                result = await hass.services.async_call(
+                    "calendar",
+                    "get_events",
+                    {"entity_id": calendar_entity, "start_date_time": start.isoformat(), "end_date_time": end.isoformat()},
+                    blocking=True,
+                    return_response=True,
+                )
+
+                if not result:
+                    continue
+
+                events = result.get(calendar_entity, {}).get("events", [])
+                keyword_lower = calendar_keyword.lower()
+
+                for event in events:
+                    summary = event.get("summary", "").lower()
+                    if keyword_lower in summary:
+                        task_id = task_data["id"]
+                        entity = hass.data[const.DOMAIN]["entities"].get(task_id)
+                        if entity:
+                            entity.task["_calendar_triggered"] = True
+                            hass.async_create_task(
+                                entity.async_update_ha_state(force_refresh=True)
+                            )
+                            _LOGGER.info(
+                                "Calendar trigger activated for task: %s (matched '%s' in '%s')",
+                                task_data.get("title"),
+                                calendar_keyword,
+                                event.get("summary"),
+                            )
+                        break
+            except Exception:
+                _LOGGER.debug(
+                    "Failed to check calendar events for %s", calendar_entity,
+                    exc_info=True,
+                )
 
     # Initialize and load stored tasks
     task_store = TaskStore(hass)
@@ -87,8 +173,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     register_services(hass)
 
     # Register event listener for tag scanned
-    unsub = hass.bus.async_listen(EVENT_TAG_SCANNED, handle_tag_scanned_event)
-    hass.data[const.DOMAIN]["unsub_tag_scanned"] = unsub
+    unsub_tag = hass.bus.async_listen(EVENT_TAG_SCANNED, handle_tag_scanned_event)
+    hass.data[const.DOMAIN]["unsub_tag_scanned"] = unsub_tag
+
+    # Register DST change event listener
+    unsub_dst = hass.bus.async_listen("clock_changed", handle_dst_event)
+    hass.data[const.DOMAIN]["unsub_dst"] = unsub_dst
+
+    # Register periodic calendar event check
+    unsub_calendar = async_track_time_interval(
+        hass, async_check_calendar_events, CALENDAR_CHECK_INTERVAL
+    )
+    hass.data[const.DOMAIN]["unsub_calendar"] = unsub_calendar
 
     return True
 
@@ -101,6 +197,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if "unsub_tag_scanned" in hass.data[const.DOMAIN]:
         hass.data[const.DOMAIN]["unsub_tag_scanned"]()
+    if "unsub_dst" in hass.data[const.DOMAIN]:
+        hass.data[const.DOMAIN]["unsub_dst"]()
+    if "unsub_calendar" in hass.data[const.DOMAIN]:
+        hass.data[const.DOMAIN]["unsub_calendar"]()
 
     async_unregister_panel(hass)
     hass.data.pop(const.DOMAIN, None)

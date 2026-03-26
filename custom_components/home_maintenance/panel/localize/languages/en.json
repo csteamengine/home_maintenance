@@ -4,15 +4,41 @@
         "none": "None",
         "no_tasks": "No tasks found."
     },
+    "schedule_types": {
+        "interval": "Recurring Interval",
+        "fixed_date": "Fixed Date"
+    },
     "intervals": {
         "day": "Day",
         "days": "Days",
         "week": "Week",
         "weeks": "Weeks",
         "month": "Month",
-        "months": "Months"
+        "months": "Months",
+        "year": "Year",
+        "years": "Years"
     },
     "panel": {
+        "filter": {
+            "search": "Search tasks...",
+            "all_assignees": "All assignees"
+        },
+        "groups": {
+            "overdue": "Overdue",
+            "due_soon": "Due Soon",
+            "upcoming": "Upcoming"
+        },
+        "status": {
+            "due_today": "Due today",
+            "overdue_singular": "1 day overdue",
+            "overdue_plural": "days overdue",
+            "due_singular": "Due in 1 day",
+            "due_plural": "days left"
+        },
+        "detail": {
+            "last_performed": "Last Performed",
+            "history": "Completion History"
+        },
         "cards": {
             "new": {
                 "title": "Create New Task",
@@ -20,11 +46,20 @@
                     "title": {
                         "heading": "Task Title"
                     },
+                    "schedule_type": {
+                        "heading": "Schedule Type"
+                    },
                     "interval_value": {
                         "heading": "Interval"
                     },
                     "interval_type": {
                         "heading": "Interval Type"
+                    },
+                    "next_due_date": {
+                        "heading": "Next Due Date"
+                    },
+                    "annual_recurrence": {
+                        "heading": "Repeat Annually"
                     },
                     "last_performed": {
                         "heading": "Last Performed",
@@ -35,6 +70,26 @@
                     },
                     "icon": {
                         "heading": "Icon"
+                    },
+                    "notes": {
+                        "heading": "Notes",
+                        "helper": "Optional free-text notes for this task"
+                    },
+                    "assigned_to": {
+                        "heading": "Assigned To",
+                        "helper": "Who is responsible for this task"
+                    },
+                    "calendar_entity": {
+                        "heading": "Calendar Entity",
+                        "helper": "HA calendar entity to watch for events"
+                    },
+                    "calendar_keyword": {
+                        "heading": "Calendar Keyword",
+                        "helper": "Keyword to match in calendar event summaries"
+                    },
+                    "dst_trigger": {
+                        "heading": "DST Trigger",
+                        "helper": "Mark task due when daylight saving time changes"
                     },
                     "label": {
                         "heading": "Label(s)"
@@ -47,7 +102,7 @@
                     "add_task": "Add Task"
                 },
                 "alerts": {
-                    "required": "Please fill all fields",
+                    "required": "Please fill all required fields",
                     "error": "Error adding task. See console for details."
                 }
             },
@@ -69,11 +124,20 @@
             "edit_task": {
                 "title": "Edit Task",
                 "fields": {
+                    "schedule_type": {
+                        "heading": "Schedule Type"
+                    },
                     "interval_value": {
                         "heading": "Interval"
                     },
                     "interval_type": {
                         "heading": "Interval Type"
+                    },
+                    "next_due_date": {
+                        "heading": "Next Due Date"
+                    },
+                    "annual_recurrence": {
+                        "heading": "Repeat Annually"
                     },
                     "last_performed": {
                         "heading": "Last Performed",
@@ -84,6 +148,26 @@
                     },
                     "icon": {
                         "heading": "Icon"
+                    },
+                    "notes": {
+                        "heading": "Notes",
+                        "helper": "Optional free-text notes for this task"
+                    },
+                    "assigned_to": {
+                        "heading": "Assigned To",
+                        "helper": "Who is responsible for this task"
+                    },
+                    "calendar_entity": {
+                        "heading": "Calendar Entity",
+                        "helper": "HA calendar entity to watch for events"
+                    },
+                    "calendar_keyword": {
+                        "heading": "Calendar Keyword",
+                        "helper": "Keyword to match in calendar event summaries"
+                    },
+                    "dst_trigger": {
+                        "heading": "DST Trigger",
+                        "helper": "Mark task due when daylight saving time changes"
                     },
                     "label": {
                         "heading": "Label(s)"

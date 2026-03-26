@@ -4,15 +4,41 @@
         "none": "Keine",
         "no_tasks": "Keine Aufgaben gefunden."
     },
+    "schedule_types": {
+        "interval": "Wiederkehrendes Intervall",
+        "fixed_date": "Festes Datum"
+    },
     "intervals": {
         "day": "Tag",
         "days": "Tage",
         "week": "Woche",
         "weeks": "Wochen",
         "month": "Monat",
-        "months": "Monate"
+        "months": "Monate",
+        "year": "Jahr",
+        "years": "Jahre"
     },
     "panel": {
+        "filter": {
+            "search": "Aufgaben suchen...",
+            "all_assignees": "Alle Zuweisungen"
+        },
+        "groups": {
+            "overdue": "Überfällig",
+            "due_soon": "Bald fällig",
+            "upcoming": "Bevorstehend"
+        },
+        "status": {
+            "due_today": "Heute fällig",
+            "overdue_singular": "1 Tag überfällig",
+            "overdue_plural": "Tage überfällig",
+            "due_singular": "Fällig in 1 Tag",
+            "due_plural": "Tage verbleibend"
+        },
+        "detail": {
+            "last_performed": "Zuletzt durchgeführt",
+            "history": "Abschlussverlauf"
+        },
         "cards": {
             "new": {
                 "title": "Neue Aufgabe erstellen",
@@ -20,11 +46,20 @@
                     "title": {
                         "heading": "Aufgabentitel"
                     },
+                    "schedule_type": {
+                        "heading": "Zeitplantyp"
+                    },
                     "interval_value": {
                         "heading": "Intervall"
                     },
                     "interval_type": {
                         "heading": "Intervalltyp"
+                    },
+                    "next_due_date": {
+                        "heading": "Nächstes Fälligkeitsdatum"
+                    },
+                    "annual_recurrence": {
+                        "heading": "Jährlich wiederholen"
                     },
                     "last_performed": {
                         "heading": "Zuletzt durchgeführt",
@@ -35,6 +70,26 @@
                     },
                     "icon": {
                         "heading": "Symbol"
+                    },
+                    "notes": {
+                        "heading": "Notizen",
+                        "helper": "Optionale Freitextnotizen für diese Aufgabe"
+                    },
+                    "assigned_to": {
+                        "heading": "Zugewiesen an",
+                        "helper": "Wer ist für diese Aufgabe verantwortlich"
+                    },
+                    "calendar_entity": {
+                        "heading": "Kalender-Entität",
+                        "helper": "HA-Kalender-Entität zur Überwachung von Ereignissen"
+                    },
+                    "calendar_keyword": {
+                        "heading": "Kalender-Stichwort",
+                        "helper": "Stichwort zum Abgleich in Kalender-Ereignissen"
+                    },
+                    "dst_trigger": {
+                        "heading": "Zeitumstellungs-Auslöser",
+                        "helper": "Aufgabe bei Zeitumstellung als fällig markieren"
                     },
                     "label": {
                         "heading": "Bezeichnung(en)"
@@ -47,7 +102,7 @@
                     "add_task": "Aufgabe hinzufügen"
                 },
                 "alerts": {
-                    "required": "Bitte alle Felder ausfüllen",
+                    "required": "Bitte alle Pflichtfelder ausfüllen",
                     "error": "Fehler beim Hinzufügen der Aufgabe. Siehe Konsole für Details."
                 }
             },
@@ -69,11 +124,20 @@
             "edit_task": {
                 "title": "Aufgabe bearbeiten",
                 "fields": {
+                    "schedule_type": {
+                        "heading": "Zeitplantyp"
+                    },
                     "interval_value": {
                         "heading": "Intervall"
                     },
                     "interval_type": {
                         "heading": "Intervalltyp"
+                    },
+                    "next_due_date": {
+                        "heading": "Nächstes Fälligkeitsdatum"
+                    },
+                    "annual_recurrence": {
+                        "heading": "Jährlich wiederholen"
                     },
                     "last_performed": {
                         "heading": "Zuletzt durchgeführt",
@@ -84,6 +148,26 @@
                     },
                     "icon": {
                         "heading": "Symbol"
+                    },
+                    "notes": {
+                        "heading": "Notizen",
+                        "helper": "Optionale Freitextnotizen für diese Aufgabe"
+                    },
+                    "assigned_to": {
+                        "heading": "Zugewiesen an",
+                        "helper": "Wer ist für diese Aufgabe verantwortlich"
+                    },
+                    "calendar_entity": {
+                        "heading": "Kalender-Entität",
+                        "helper": "HA-Kalender-Entität zur Überwachung von Ereignissen"
+                    },
+                    "calendar_keyword": {
+                        "heading": "Kalender-Stichwort",
+                        "helper": "Stichwort zum Abgleich in Kalender-Ereignissen"
+                    },
+                    "dst_trigger": {
+                        "heading": "Zeitumstellungs-Auslöser",
+                        "helper": "Aufgabe bei Zeitumstellung als fällig markieren"
                     },
                     "label": {
                         "heading": "Bezeichnung(en)"

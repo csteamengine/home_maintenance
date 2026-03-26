@@ -84,11 +84,83 @@ class HomeMaintenanceSensor(BinarySensorEntity):
             return last_performed + timedelta(weeks=interval_value)
         if interval_type == "months":
             return last_performed + relativedelta(months=interval_value)
+        if interval_type == "years":
+            return last_performed + relativedelta(years=interval_value)
 
         return last_performed
 
+    def _apply_common_attributes(self) -> None:
+        """Apply optional attributes common to all schedule types."""
+        schedule_type = self.task.get("schedule_type", "interval")
+        self._attr_extra_state_attributes["schedule_type"] = schedule_type
+        if self.task.get("tag_id"):
+            self._attr_extra_state_attributes["tag_id"] = self.task["tag_id"]
+        if self.task.get("notes"):
+            self._attr_extra_state_attributes["notes"] = self.task["notes"]
+        if self.task.get("completion_history"):
+            self._attr_extra_state_attributes["completion_history"] = self.task["completion_history"]
+        if self.task.get("assigned_to"):
+            self._attr_extra_state_attributes["assigned_to"] = self.task["assigned_to"]
+        if self.task.get("calendar_entity"):
+            self._attr_extra_state_attributes["calendar_entity"] = self.task["calendar_entity"]
+        if self.task.get("calendar_keyword"):
+            self._attr_extra_state_attributes["calendar_keyword"] = self.task["calendar_keyword"]
+        if self.task.get("dst_trigger"):
+            self._attr_extra_state_attributes["dst_trigger"] = True
+
+        # If a calendar or DST trigger has fired, force the sensor ON
+        if self.task.get("_calendar_triggered") or self.task.get("_dst_triggered"):
+            self._attr_is_on = True
+
     def _update_state(self) -> None:
         """Get the latest state of the sensor."""
+        schedule_type = self.task.get("schedule_type", "interval")
+
+        if schedule_type == "fixed_date":
+            self._update_state_fixed_date()
+        else:
+            self._update_state_interval()
+
+    def _update_state_fixed_date(self) -> None:
+        """Update state for fixed-date scheduled tasks."""
+        today = dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        next_due_str = self.task.get("next_due_date")
+
+        if not next_due_str:
+            self._attr_is_on = True
+            self._attr_extra_state_attributes = {
+                "last_performed": self.task.get("last_performed", ""),
+                "next_due": "unknown",
+                "annual_recurrence": self.task.get("annual_recurrence", False),
+            }
+            self._apply_common_attributes()
+            return
+
+        due_date = dt_util.parse_datetime(next_due_str)
+        if due_date is None:
+            self._attr_is_on = True
+            self._attr_extra_state_attributes = {
+                "last_performed": self.task.get("last_performed", ""),
+                "next_due": "unknown",
+                "annual_recurrence": self.task.get("annual_recurrence", False),
+            }
+            self._apply_common_attributes()
+            return
+
+        if due_date.tzinfo is None:
+            due_date = dt_util.as_utc(due_date)
+        due_date = due_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        self._attr_is_on = today >= due_date
+        self._attr_extra_state_attributes = {
+            "last_performed": self.task.get("last_performed", ""),
+            "next_due": due_date.isoformat(),
+            "annual_recurrence": self.task.get("annual_recurrence", False),
+        }
+        self._apply_common_attributes()
+
+    def _update_state_interval(self) -> None:
+        """Update state for interval-based tasks."""
         last = dt_util.parse_datetime(self.task["last_performed"])
         if last is None:
             self._attr_is_on = True
@@ -98,8 +170,7 @@ class HomeMaintenanceSensor(BinarySensorEntity):
                 "interval_type": self.task["interval_type"],
                 "next_due": "unknown",
             }
-            if self.task["tag_id"]:
-                self._attr_extra_state_attributes["tag_id"] = self.task["tag_id"]
+            self._apply_common_attributes()
             return
 
         if last.tzinfo is None:
@@ -120,8 +191,7 @@ class HomeMaintenanceSensor(BinarySensorEntity):
             "interval_type": self.task["interval_type"],
             "next_due": due_date.isoformat(),
         }
-        if self.task["tag_id"]:
-            self._attr_extra_state_attributes["tag_id"] = self.task["tag_id"]
+        self._apply_common_attributes()
 
     async def async_update(self) -> None:
         """Get the latest state of the sensor."""

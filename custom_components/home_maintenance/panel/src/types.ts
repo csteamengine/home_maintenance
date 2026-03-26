@@ -1,14 +1,15 @@
 import { localize } from '../localize/localize'
 
-export type IntervalType = "days" | "weeks" | "months";
+export type IntervalType = "days" | "weeks" | "months" | "years";
 
-export const INTERVAL_TYPES: IntervalType[] = ["days", "weeks", "months"];
+export const INTERVAL_TYPES: IntervalType[] = ["days", "weeks", "months", "years"];
 
 export function getIntervalTypeLabels(lang: string): Record<IntervalType, string> {
     return {
         days: localize("intervals.days", lang),
         weeks: localize("intervals.weeks", lang),
         months: localize("intervals.months", lang),
+        years: localize("intervals.years", lang),
     };
 }
 
@@ -49,4 +50,19 @@ export interface Task {
     last_performed: string;
     tag_id?: string;
     icon?: string;
+    notes?: string;
+    completion_history?: CompletionRecord[];
+    assigned_to?: string;
+    schedule_type?: "interval" | "fixed_date";
+    next_due_date?: string;
+    annual_recurrence?: boolean;
+    calendar_entity?: string;
+    calendar_keyword?: string;
+    dst_trigger?: boolean;
+}
+
+export interface CompletionRecord {
+    timestamp: string;
+    completed_by?: string | null;
+    note?: string | null;
 }

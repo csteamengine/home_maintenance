@@ -41,7 +41,7 @@ def websocket_add_task(
     """Add a new task."""
     store = hass.data[DOMAIN].get("store")
 
-    last_str = msg["last_performed"]
+    last_str = msg.get("last_performed")
     if last_str:
         parsed = dt_util.parse_datetime(last_str)
         if parsed is None:
@@ -58,14 +58,24 @@ def websocket_add_task(
             dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         )
 
+    schedule_type = msg.get("schedule_type", "interval")
+
     new_task = HomeMaintenanceTask(
         id=f"home_maintenance_{uuid.uuid4().hex}",
         title=msg["title"],
-        interval_value=msg["interval_value"],
-        interval_type=msg["interval_type"],
+        interval_value=msg.get("interval_value", 0),
+        interval_type=msg.get("interval_type", "days"),
         last_performed=last_performed,
         tag_id=msg.get("tag_id"),
         icon=msg.get("icon"),
+        notes=msg.get("notes"),
+        assigned_to=msg.get("assigned_to"),
+        schedule_type=schedule_type,
+        next_due_date=msg.get("next_due_date"),
+        annual_recurrence=msg.get("annual_recurrence", False),
+        calendar_entity=msg.get("calendar_entity"),
+        calendar_keyword=msg.get("calendar_keyword"),
+        dst_trigger=msg.get("dst_trigger", False),
     )
 
     labels = msg.get("labels", [])
@@ -111,7 +121,11 @@ def websocket_complete_task(
     """Mark a task as completed."""
     store = hass.data[DOMAIN].get("store")
     task_id = msg["task_id"]
-    store.update_last_performed(task_id)
+    completed_by = msg.get("completed_by")
+    completion_note = msg.get("completion_note")
+    store.update_last_performed(
+        task_id, completed_by=completed_by, completion_note=completion_note
+    )
     connection.send_result(msg["id"], {"success": True})
 
 
@@ -181,11 +195,19 @@ async def async_register_websockets(hass: HomeAssistant) -> None:
             {
                 vol.Required("type"): "home_maintenance/add_task",
                 vol.Required("title"): str,
-                vol.Required("interval_value"): int,
-                vol.Required("interval_type"): str,
+                vol.Optional("interval_value"): int,
+                vol.Optional("interval_type"): str,
                 vol.Optional("last_performed"): str,
                 vol.Optional("tag_id"): str,
                 vol.Optional("icon"): str,
+                vol.Optional("notes"): str,
+                vol.Optional("assigned_to"): str,
+                vol.Optional("schedule_type"): str,
+                vol.Optional("next_due_date"): str,
+                vol.Optional("annual_recurrence"): bool,
+                vol.Optional("calendar_entity"): str,
+                vol.Optional("calendar_keyword"): str,
+                vol.Optional("dst_trigger"): bool,
                 vol.Optional("labels"): [str],
             }
         ),
@@ -212,6 +234,8 @@ async def async_register_websockets(hass: HomeAssistant) -> None:
             {
                 vol.Required("type"): "home_maintenance/complete_task",
                 vol.Required("task_id"): str,
+                vol.Optional("completed_by"): str,
+                vol.Optional("completion_note"): str,
             }
         ),
     )

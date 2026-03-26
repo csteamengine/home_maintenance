@@ -8,21 +8,13 @@ This custom integration helps you remember important chores like changing air fi
 
 ## ✨ What It Does
 
-- 📋 Lets you create recurring tasks (e.g., “Change HVAC filter every 90 days”)
-- 🔔 Creates entities in Home Assistant to be able to create automations and display on dashboards
-- ✅ Lets you mark tasks as completed so it can track the next due date
-- 📊 Shows tasks in a clean, easy-to-use interface built into Home Assistant
-
----
-
-## ⚠️ Important Note
-This integration was created to fill a simple but important gap in Home Assistant: the ability to create recurring tasks without relying on multiple helpers and automations. It is intentionally minimal by design — focused solely on task tracking.
-
-Home Assistant already provides powerful features for dashboards, automations, and alerts, and this integration is meant to complement those, not replace them.
-
-Because it's a custom component with limited scope and resources, not all feature requests will be added or considered — especially if the functionality already exists natively in Home Assistant or falls outside the intended purpose of the integration.
-
-Thank you for understanding and helping keep this integration focused and maintainable.
+- 📋 Create recurring **interval-based** tasks (e.g., "Change HVAC filter every 90 days") or **fixed-date** tasks (e.g., "Aerate lawn — September 1, annually")
+- 🔔 Creates binary sensor entities in Home Assistant for automations and dashboards
+- ✅ Mark tasks as completed with full **completion history** tracking
+- 📝 Add **notes** and **assign tasks** to household members
+- 📅 Trigger tasks from **calendar events** or **daylight saving time** changes
+- 📊 Modern card-based UI grouped by status: **Overdue**, **Due Soon**, **Upcoming**
+- 🔍 Search and filter tasks by name, notes, or assignee
 
 ---
 
@@ -58,27 +50,109 @@ Download the <a href="https://github.com/TJPoorman/home_maintenance/releases">la
 
 ## 🛠️ How to Use
 
-- Open **Home Maintenance** from the Home Assistant sidebar.
-- To add a new task enter:
-  - A title (e.g., “Clean Dryer Vent”)
-  - How often it needs to be done
-  - Select the interval period (Defaults to days)
-  - The last time you did it (Optional. If omitted will be today)
-  - Select an NFC tag (Optional. Will mark the task complete when scanned)
-  - Select an icon (Optional)
-  - Click **Add Task**
-- Tasks will show if they are due or overdue
-- Click **Complete** to reset the Last Performed date to today
+Open **Home Maintenance** from the Home Assistant sidebar.
+
+### Creating Tasks
+
+Click the **+** button at the top to open the create form. Tasks can be one of two types:
+
+#### Interval-Based Tasks (default)
+- Set a title, interval value, and interval type (Days / Weeks / Months / Years)
+- The task becomes due when `last_performed + interval` has passed
+
+#### Fixed-Date Tasks
+- Switch the schedule type to "Fixed Date"
+- Set a specific **next due date**
+- Optionally enable **Repeat Annually** to auto-advance to next year on completion
+
+### Optional Fields (expand "Optional settings")
+
+| Field | Description |
+|-------|-------------|
+| **Last Performed** | When the task was last done (defaults to today) |
+| **Icon** | Custom MDI icon for the task |
+| **Notes** | Free-text notes visible in the task detail and exposed as entity attribute |
+| **Assigned To** | Who is responsible (e.g., "Charlie", "Sarah", "Shared") |
+| **Calendar Entity** | A HA calendar entity to watch for matching events |
+| **Calendar Keyword** | Keyword to match in calendar event summaries |
+| **DST Trigger** | Mark task due when daylight saving time changes |
+| **Label(s)** | HA labels for organization |
+| **Tag** | NFC tag — task completes when scanned |
+
+### Task List
+
+Tasks are displayed as cards grouped into three sections:
+- 🔴 **Overdue** — past due date
+- 🟡 **Due Soon** — within 14 days of due date
+- 🟢 **Upcoming** — more than 14 days out
+
+Each card shows:
+- Task title and icon
+- Interval or "Fixed Date" label
+- Assignee badge (if set)
+- Due date and days remaining/overdue
+- Action buttons: Complete, Edit, Delete, Expand
+
+Click a card or the expand arrow to see:
+- Notes
+- Last performed date
+- Completion history (who completed it, when, and any note)
+
+### Search & Filter
+- Use the **search bar** to filter by title, notes, or assignee name
+- Use the **assignee dropdown** (appears when tasks have assignees) to filter by person
+
+---
+
+## 📋 Task Fields & Entity Attributes
+
+Each task creates a `binary_sensor` entity that is ON when due. The following attributes are exposed:
+
+| Attribute | Description |
+|-----------|-------------|
+| `last_performed` | ISO date of last completion |
+| `interval_value` | Interval number (for interval tasks) |
+| `interval_type` | days/weeks/months/years (for interval tasks) |
+| `next_due` | ISO date of next due date |
+| `schedule_type` | "interval" or "fixed_date" |
+| `annual_recurrence` | Boolean (for fixed-date tasks) |
+| `notes` | Free-text notes |
+| `assigned_to` | Assignee name |
+| `tag_id` | NFC tag entity ID |
+| `completion_history` | List of last 20 completions (timestamp, completed_by, note) |
+| `calendar_entity` | Calendar entity ID being watched |
+| `calendar_keyword` | Keyword being matched |
+| `dst_trigger` | Whether DST changes trigger this task |
+
+---
+
+## 📅 Calendar & Event Triggers
+
+### Calendar Event Matching
+1. Set a **Calendar Entity** (e.g., `calendar.home`) on a task
+2. Set a **Calendar Keyword** (e.g., "smoke detector")
+3. Every 30 minutes, the integration checks the next 7 days of events
+4. If an event summary contains the keyword, the task's sensor turns ON
+
+### DST Trigger
+1. Enable **DST Trigger** on a task
+2. When Home Assistant fires a `clock_changed` event (daylight saving time), the task's sensor turns ON
+3. Great for tasks like "Change smoke detector batteries" or "Adjust clocks"
+
+Both triggers are additive — they work alongside interval and fixed-date scheduling. Completing the task clears the trigger until the next event.
 
 ---
 
 ## 🔄 Example Tasks
 
-| Task                 | Interval | Last Done     |
-|----------------------|----------|---------------|
-| Change HVAC Filter   | 90 days  | Jan 15, 2025  |
-| Test Smoke Alarms    | 6 months | Dec 1, 2024   |
-| Clean Gutters        | 8 weeks  | Oct 1, 2024   |
+| Task | Type | Schedule | Assignee |
+|------|------|----------|----------|
+| Change HVAC Filter | Interval | 90 days | Shared |
+| Test Smoke Alarms | Interval | 6 months | Charlie |
+| Clean Gutters | Interval | 8 weeks | Charlie |
+| Aerate Lawn | Fixed Date | Sep 1, annually | Sarah |
+| HVAC Tune-up | Fixed Date | Oct 15, annually | Shared |
+| Change Smoke Detector Batteries | DST Trigger | On DST change | Charlie |
 
 ---
 
@@ -98,6 +172,14 @@ data:
   entity_id: binary_sensor.clean_gutters
   performed_date: "2025-06-19"
 ```
+
+---
+
+## 🔄 Upgrading from v1.x
+
+Version 2.0 is fully backward compatible with existing task data. All new fields (`notes`, `assigned_to`, `schedule_type`, `completion_history`, etc.) default to empty/null, so existing tasks continue to work as interval-based tasks without any migration needed.
+
+The UI has been completely redesigned — the data table has been replaced with grouped task cards. The create form is now hidden behind a + button to keep the view clean.
 
 ---
 

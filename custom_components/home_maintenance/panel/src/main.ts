@@ -2,28 +2,69 @@ import {
     mdiCheckCircleOutline,
     mdiDelete,
     mdiPencil,
-    mdiDotsHorizontal,
+    mdiChevronDown,
+    mdiChevronUp,
+    mdiMagnify,
+    mdiPlus,
+    mdiClose,
 } from "@mdi/js";
-import { LitElement, html, nothing } from "lit";
-import { property, state, query } from "lit/decorators.js";
+import { LitElement, html, nothing, TemplateResult } from "lit";
+import { property, state } from "lit/decorators.js";
 import type { HomeAssistant } from "custom-card-helpers";
 import { formatDateNumeric } from "custom-card-helpers";
 
 import { localize } from '../localize/localize';
 import { VERSION } from "./const";
 import { loadConfigDashboard } from "./helpers";
-import { commonStyle } from './styles'
-import { EntityRegistryEntry, IntegrationConfig, IntervalType, INTERVAL_TYPES, getIntervalTypeLabels, Label, Task, Tag } from './types';
+import { panelStyles } from './styles'
+import { EntityRegistryEntry, IntegrationConfig, IntervalType, INTERVAL_TYPES, getIntervalTypeLabels, Label, Task, Tag, CompletionRecord } from './types';
 import { completeTask, getConfig, loadLabelRegistry, loadRegistryEntries, loadTags, loadTask, loadTasks, removeTask, saveTask, updateTask } from './data/websockets';
 
 interface TaskFormData {
     title: string;
+    schedule_type: string;
     interval_value: number | "";
     interval_type: string;
     last_performed: string;
+    next_due_date: string;
+    annual_recurrence: boolean;
     icon: string;
     label: string[];
     tag: string;
+    notes: string;
+    assigned_to: string;
+    calendar_entity: string;
+    calendar_keyword: string;
+    dst_trigger: boolean;
+}
+
+interface ComputedTask {
+    raw: Task;
+    nextDue: Date;
+    daysUntilDue: number;
+    status: "overdue" | "due_soon" | "upcoming";
+}
+
+const DUE_SOON_DAYS = 14;
+
+function emptyFormData(): TaskFormData {
+    return {
+        title: "",
+        schedule_type: "interval",
+        interval_value: "",
+        interval_type: "days",
+        last_performed: "",
+        next_due_date: "",
+        annual_recurrence: false,
+        icon: "",
+        label: [],
+        tag: "",
+        notes: "",
+        assigned_to: "",
+        calendar_entity: "",
+        calendar_keyword: "",
+        dst_trigger: false,
+    };
 }
 
 export class HomeMaintenancePanel extends LitElement {
@@ -36,258 +77,243 @@ export class HomeMaintenancePanel extends LitElement {
     @state() private registry: EntityRegistryEntry[] = [];
     @state() private labelRegistry: Label[] = [];
 
-    // New Task form state
-    @state() private _formData: TaskFormData = {
-        title: "",
-        interval_value: "",
-        interval_type: "days",
-        last_performed: "",
-        icon: "",
-        label: [],
-        tag: "",
-    };
+    // Search and filter state
+    @state() private _searchQuery: string = "";
+    @state() private _assigneeFilter: string = "";
+
+    // Expanded task cards (set of task IDs)
+    @state() private _expandedTasks: Set<string> = new Set();
+
+    // Create form state
+    @state() private _showCreateForm: boolean = false;
+    @state() private _formData: TaskFormData = emptyFormData();
     private _advancedOpen: boolean = false;
 
     // Edit dialog state
     @state() private _editingTaskId: string | null = null;
-    @state() private _editFormData: TaskFormData = {
-        title: "",
-        interval_value: "",
-        interval_type: "days",
-        last_performed: "",
-        icon: "",
-        label: [],
-        tag: "",
-    };
+    @state() private _editFormData: TaskFormData = emptyFormData();
 
-    // Shared overflow menu state
-    @state() private _selectedTaskId: string | null = null;
-    @query("#actions-menu") private _actionsMenu?: any;
+    // --- Computed task data ---
 
-    private get _columns() {
-        return {
-            icon: {
-                title: "",
-                moveable: false,
-                showNarrow: false,
-                label: "icon",
-                type: "icon",
-                template: (task: Task) =>
-                    task.icon ? html`<ha-icon .icon=${task.icon}></ha-icon>` : nothing,
-            },
-            tagIcon: {
-                title: "",
-                moveable: false,
-                showNarrow: false,
-                label: "tag",
-                type: "icon",
-                template: (task: any) =>
-                    task.tagIcon ? html`<ha-icon .icon=${task.tagIcon}></ha-icon>` : nothing,
-            },
-            title: {
-                title: 'Title',
-                main: true,
-                showNarrow: true,
-                sortable: true,
-                filterable: true,
-                grows: true,
-                extraTemplate: (task: Task) => {
-                    const entity = this.registry.find((entry) => entry.unique_id === task.id);
-                    if (!entity) return nothing;
+    private _computeTask(task: Task): ComputedTask {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
 
-                    const labels = this.labelRegistry.filter((lr) => entity.labels.includes(lr.label_id));
+        let nextDue: Date;
 
-                    return labels.length
-                        ? html`<ha-data-table-labels .labels=${labels}></ha-data-table-labels>`
-                        : nothing;
-                },
-            },
-            interval_days: {
-                title: 'Interval',
-                showNarrow: false,
-                sortable: true,
-                minWidth: "100px",
-                maxWidth: "100px",
-                template: (task: Task) => {
-                    const type = task.interval_type;
-                    const isSingular = task.interval_value === 1;
-                    const labelKey = isSingular ? type.slice(0, -1) : type;
-                    return `${task.interval_value} ${localize(`intervals.${labelKey}`, this.hass!.language)}`;
-                }
-            },
-            last_performed: {
-                title: 'Last Performed',
-                showNarrow: false,
-                sortable: true,
-                minWidth: "150px",
-                maxWidth: "150px",
-                template: (task: Task) => {
-                    if (!task.last_performed) return "-";
+        if (task.schedule_type === "fixed_date" && task.next_due_date) {
+            const [datePart] = task.next_due_date.split("T");
+            const [year, month, day] = datePart.split("-").map(Number);
+            nextDue = new Date(year, month - 1, day);
+        } else {
+            const [datePart] = task.last_performed.split("T");
+            const [year, month, day] = datePart.split("-").map(Number);
+            nextDue = new Date(year, month - 1, day);
 
-                    const date = new Date(this.computeISODate(task.last_performed));
-                    return formatDateNumeric(date, this.hass!.locale);
-                }
-            },
-            next_due: {
-                title: localize('panel.cards.current.next', this.hass!.language),
-                showNarrow: true,
-                sortable: true,
-                direction: "asc",
-                minWidth: "100px",
-                maxWidth: "100px",
-                template: (task: any) => {
-                    const now = new Date();
-                    const next = new Date(task.next_due);
-                    const isDue = next <= now;
-
-                    return html`
-                        <span style=${isDue ? "color: var(--error-color, red); font-weight: bold;" : ""}>
-                            ${formatDateNumeric(next, this.hass!.locale)}
-                        </span>` || "—";
-                },
-            },
-            complete: {
-                minWidth: "64px",
-                maxWidth: "64px",
-                sortable: false,
-                groupable: false,
-                showNarrow: true,
-                moveable: false,
-                hideable: false,
-                type: "overflow",
-                template: (task: Task) => html`
-                <ha-icon-button
-                    @click=${() => this._handleCompleteTaskClick(task.id)}
-                    .label="Complete"
-                    title="Mark Task Complete"
-                    .path=${mdiCheckCircleOutline}
-                ></ha-icon-button>
-              `,
-            },
-            actions: {
-                title: "",
-                label: "actions",
-                showNarrow: true,
-                moveable: false,
-                hideable: false,
-                type: "overflow-menu",
-                template: (task: Task) => html`
-                    <ha-icon-button
-                        @click=${(e: Event) => this._handleShowMenu(task.id, e)}
-                        .label="Actions"
-                        title="Actions"
-                        .path=${mdiDotsHorizontal}
-                    ></ha-icon-button>
-                `,
-            },
+            switch (task.interval_type) {
+                case "days":
+                    nextDue.setDate(nextDue.getDate() + task.interval_value);
+                    break;
+                case "weeks":
+                    nextDue.setDate(nextDue.getDate() + task.interval_value * 7);
+                    break;
+                case "months":
+                    nextDue.setMonth(nextDue.getMonth() + task.interval_value);
+                    break;
+                case "years":
+                    nextDue.setFullYear(nextDue.getFullYear() + task.interval_value);
+                    break;
+            }
         }
-    };
+        nextDue.setHours(0, 0, 0, 0);
 
-    private get _columnsToDisplay() {
-        return Object.fromEntries(
-            Object.entries(this._columns).filter(([_, col]) =>
-                this.narrow ? col.showNarrow !== false : true
-            )
-        );
+        const diffMs = nextDue.getTime() - now.getTime();
+        const daysUntilDue = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        let status: "overdue" | "due_soon" | "upcoming";
+        if (daysUntilDue <= 0) {
+            status = "overdue";
+        } else if (daysUntilDue <= DUE_SOON_DAYS) {
+            status = "due_soon";
+        } else {
+            status = "upcoming";
+        }
+
+        return { raw: task, nextDue, daysUntilDue, status };
     }
 
-    private get _rows() {
-        return this.tasks.map((task: Task) => ({
-            icon: task.icon,
-            id: task.id,
-            title: task.title,
-            interval_value: task.interval_value,
-            interval_type: task.interval_type,
-            last_performed: task.last_performed ?? 'Never',
-            interval_days: (() => {
-                switch (task.interval_type) {
-                    case "days":
-                        return task.interval_value;
-                    case "weeks":
-                        return task.interval_value * 7;
-                    case "months":
-                        return task.interval_value * 30;
-                    default:
-                        return Number.MAX_SAFE_INTEGER;
-                }
-            })(),
-            next_due: (() => {
-                const [datePart] = task.last_performed.split("T");
-                const [year, month, day] = datePart.split("-").map(Number);
-                const next = new Date(year, month - 1, day);
-
-                switch (task.interval_type) {
-                    case "days":
-                        next.setDate(next.getDate() + task.interval_value);
-                        break;
-                    case "weeks":
-                        next.setDate(next.getDate() + task.interval_value * 7);
-                        break;
-                    case "months":
-                        next.setMonth(next.getMonth() + task.interval_value);
-                        break;
-                    default:
-                        throw new Error(`Unsupported interval type: ${task.interval_type}`);
-                }
-
-                return next;
-            })(),
-            tagIcon: (() => task.tag_id && task.tag_id.trim() !== "" ? "mdi:tag" : undefined)(),
-        }));
+    private get _computedTasks(): ComputedTask[] {
+        return this.tasks.map(t => this._computeTask(t));
     }
+
+    private get _filteredTasks(): ComputedTask[] {
+        let tasks = this._computedTasks;
+
+        if (this._searchQuery.trim()) {
+            const q = this._searchQuery.toLowerCase();
+            tasks = tasks.filter(t =>
+                t.raw.title.toLowerCase().includes(q) ||
+                (t.raw.notes && t.raw.notes.toLowerCase().includes(q)) ||
+                (t.raw.assigned_to && this._getPersonName(t.raw.assigned_to).toLowerCase().includes(q))
+            );
+        }
+
+        if (this._assigneeFilter) {
+            tasks = tasks.filter(t => t.raw.assigned_to === this._assigneeFilter);
+        }
+
+        return tasks;
+    }
+
+    private get _uniqueAssignees(): string[] {
+        const assignees = new Set<string>();
+        for (const task of this.tasks) {
+            if (task.assigned_to?.trim()) {
+                assignees.add(task.assigned_to.trim());
+            }
+        }
+        return Array.from(assignees).sort();
+    }
+
+    private _groupTasks(tasks: ComputedTask[]): { overdue: ComputedTask[], due_soon: ComputedTask[], upcoming: ComputedTask[] } {
+        const overdue: ComputedTask[] = [];
+        const due_soon: ComputedTask[] = [];
+        const upcoming: ComputedTask[] = [];
+
+        for (const task of tasks) {
+            if (task.status === "overdue") overdue.push(task);
+            else if (task.status === "due_soon") due_soon.push(task);
+            else upcoming.push(task);
+        }
+
+        // Sort each group by next due date
+        const byDate = (a: ComputedTask, b: ComputedTask) => a.nextDue.getTime() - b.nextDue.getTime();
+        overdue.sort(byDate);
+        due_soon.sort(byDate);
+        upcoming.sort(byDate);
+
+        return { overdue, due_soon, upcoming };
+    }
+
+    // --- Form schemas ---
 
     private get _basicSchema() {
-        return [
-            { name: "title", required: true, selector: { text: {} }, },
-            { name: "interval_value", required: true, selector: { number: { min: 1, mode: "box" } }, },
+        const isFixedDate = this._formData.schedule_type === "fixed_date";
+        const schema: any[] = [
+            { name: "title", required: true, selector: { text: {} } },
             {
-                name: "interval_type",
+                name: "schedule_type",
                 required: true,
                 selector: {
                     select: {
-                        options: INTERVAL_TYPES.map((type) => ({
-                            value: type,
-                            label: getIntervalTypeLabels(this.hass!.language)[type],
-                        })),
-                        mode: "dropdown"
+                        options: [
+                            { value: "interval", label: localize("schedule_types.interval", this.hass!.language) },
+                            { value: "fixed_date", label: localize("schedule_types.fixed_date", this.hass!.language) },
+                        ],
+                        mode: "dropdown",
                     },
                 },
             },
-        ]
-    };
+        ];
+
+        if (isFixedDate) {
+            schema.push(
+                { name: "next_due_date", required: true, selector: { date: {} } },
+                { name: "annual_recurrence", selector: { boolean: {} } },
+            );
+        } else {
+            schema.push(
+                { name: "interval_value", required: true, selector: { number: { min: 1, mode: "box" } } },
+                {
+                    name: "interval_type",
+                    required: true,
+                    selector: {
+                        select: {
+                            options: INTERVAL_TYPES.map((type) => ({
+                                value: type,
+                                label: getIntervalTypeLabels(this.hass!.language)[type],
+                            })),
+                            mode: "dropdown"
+                        },
+                    },
+                },
+            );
+        }
+
+        return schema;
+    }
 
     private get _advancedSchema() {
         return [
-            { name: "last_performed", selector: { date: {} }, },
-            { name: "icon", selector: { icon: {} }, },
-            { name: "label", selector: { label: { multiple: true } }, },
-            { name: "tag", selector: { entity: { filter: { domain: "tag" } } }, },
-        ]
-    };
+            { name: "last_performed", selector: { date: {} } },
+            { name: "icon", selector: { icon: {} } },
+            { name: "notes", selector: { text: { multiline: true } } },
+            { name: "assigned_to", selector: { select: { options: this._personOptions, mode: "dropdown" } } },
+            { name: "calendar_entity", selector: { entity: { filter: { domain: "calendar" } } } },
+            { name: "calendar_keyword", selector: { text: {} } },
+            { name: "dst_trigger", selector: { boolean: {} } },
+            { name: "label", selector: { label: { multiple: true } } },
+            { name: "tag", selector: { entity: { filter: { domain: "tag" } } } },
+        ];
+    }
 
     private get _editSchema() {
-        return [
-            { name: "interval_value", required: true, selector: { number: { min: 1, mode: "box" } }, },
+        const isFixedDate = this._editFormData.schedule_type === "fixed_date";
+        const schema: any[] = [
             {
-                name: "interval_type",
+                name: "schedule_type",
                 required: true,
                 selector: {
                     select: {
-                        options: INTERVAL_TYPES.map((type) => ({
-                            value: type,
-                            label: getIntervalTypeLabels(this.hass!.language)[type],
-                        })),
-                        mode: "dropdown"
+                        options: [
+                            { value: "interval", label: localize("schedule_types.interval", this.hass!.language) },
+                            { value: "fixed_date", label: localize("schedule_types.fixed_date", this.hass!.language) },
+                        ],
+                        mode: "dropdown",
                     },
                 },
             },
+        ];
+
+        if (isFixedDate) {
+            schema.push(
+                { name: "next_due_date", required: true, selector: { date: {} } },
+                { name: "annual_recurrence", selector: { boolean: {} } },
+            );
+        } else {
+            schema.push(
+                { name: "interval_value", required: true, selector: { number: { min: 1, mode: "box" } } },
+                {
+                    name: "interval_type",
+                    required: true,
+                    selector: {
+                        select: {
+                            options: INTERVAL_TYPES.map((type) => ({
+                                value: type,
+                                label: getIntervalTypeLabels(this.hass!.language)[type],
+                            })),
+                            mode: "dropdown"
+                        },
+                    },
+                },
+            );
+        }
+
+        schema.push(
             { type: "constant", name: localize('panel.dialog.edit_task.sections.optional', this.hass!.language), disabled: true },
-            { name: "last_performed", selector: { date: {} }, },
-            { name: "icon", selector: { icon: {} }, },
-            { name: "label", selector: { label: { multiple: true } }, },
-            { name: "tag", selector: { entity: { filter: { domain: "tag" } } }, },
-        ]
-    };
+            { name: "last_performed", selector: { date: {} } },
+            { name: "icon", selector: { icon: {} } },
+            { name: "notes", selector: { text: { multiline: true } } },
+            { name: "assigned_to", selector: { select: { options: this._personOptions, mode: "dropdown" } } },
+            { name: "calendar_entity", selector: { entity: { filter: { domain: "calendar" } } } },
+            { name: "calendar_keyword", selector: { text: {} } },
+            { name: "dst_trigger", selector: { boolean: {} } },
+            { name: "label", selector: { label: { multiple: true } } },
+            { name: "tag", selector: { entity: { filter: { domain: "tag" } } } },
+        );
+
+        return schema;
+    }
 
     private _computeLabel = (schema: { name: string }): string => {
         try {
@@ -321,6 +347,69 @@ export class HomeMaintenancePanel extends LitElement {
         }
     }
 
+    // --- Helpers ---
+
+    private computeISODate(dateStr: string): string {
+        if (dateStr) {
+            const [yearStr, monthStr, dayStr] = dateStr.split("T")[0].split("-");
+            const year = Number(yearStr);
+            const month = Number(monthStr);
+            const day = Number(dayStr);
+
+            if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+                const parsedDate = new Date(year, month - 1, day);
+                parsedDate.setHours(0, 0, 0, 0);
+                return parsedDate.toISOString();
+            }
+        }
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return today.toISOString();
+    }
+
+    private _formatDaysLabel(days: number): string {
+        if (days === 0) return localize("panel.status.due_today", this.hass!.language);
+        if (days < 0) {
+            const abs = Math.abs(days);
+            return abs === 1
+                ? localize("panel.status.overdue_singular", this.hass!.language)
+                : `${abs} ${localize("panel.status.overdue_plural", this.hass!.language)}`;
+        }
+        return days === 1
+            ? localize("panel.status.due_singular", this.hass!.language)
+            : `${days} ${localize("panel.status.due_plural", this.hass!.language)}`;
+    }
+
+    private get _personOptions(): { value: string; label: string }[] {
+        if (!this.hass) return [];
+        return Object.keys(this.hass.states)
+            .filter(id => id.startsWith("person."))
+            .map(id => ({
+                value: id,
+                label: this.hass!.states[id].attributes?.friendly_name || id.replace("person.", ""),
+            }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    private _getPersonName(entityId: string): string {
+        if (!this.hass || !entityId) return entityId;
+        const state = this.hass.states[entityId];
+        return state?.attributes?.friendly_name || entityId.replace("person.", "");
+    }
+
+    private _getIntervalLabel(task: Task): string {
+        if (task.schedule_type === "fixed_date") {
+            return localize("schedule_types.fixed_date", this.hass!.language)
+                + (task.annual_recurrence ? ` (${localize("panel.cards.new.fields.annual_recurrence.heading", this.hass!.language)})` : "");
+        }
+        const type = task.interval_type;
+        const isSingular = task.interval_value === 1;
+        const labelKey = isSingular ? type.slice(0, -1) : type;
+        return `${task.interval_value} ${localize(`intervals.${labelKey}`, this.hass!.language)}`;
+    }
+
+    // --- Data loading ---
+
     private async loadData() {
         await loadConfigDashboard();
         this.tags = await loadTags(this.hass!);
@@ -331,58 +420,8 @@ export class HomeMaintenancePanel extends LitElement {
     }
 
     private async resetForm() {
-        this._formData = {
-            title: "",
-            interval_value: "",
-            interval_type: "days",
-            last_performed: "",
-            icon: "",
-            label: [],
-            tag: "",
-        };
-
+        this._formData = emptyFormData();
         this.tasks = await loadTasks(this.hass!);
-    }
-
-    private async resetEditForm() {
-        this._editFormData = {
-            title: "",
-            interval_value: "",
-            interval_type: "days",
-            last_performed: "",
-            icon: "",
-            label: [],
-            tag: "",
-        };
-    }
-
-    private computeISODate(dateStr: string): string {
-        let isoDateStr: string;
-
-        if (dateStr) {
-            // Only take the YYYY-MM-DD part to avoid time zone issues
-            const [yearStr, monthStr, dayStr] = dateStr.split("T")[0].split("-");
-            const year = Number(yearStr);
-            const month = Number(monthStr);
-            const day = Number(dayStr);
-
-            if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-                const parsedDate = new Date(year, month - 1, day);
-                parsedDate.setHours(0, 0, 0, 0);
-                isoDateStr = parsedDate.toISOString();
-            } else {
-                alert("Invalid date entered.");
-                const fallback = new Date();
-                fallback.setHours(0, 0, 0, 0);
-                isoDateStr = fallback.toISOString();
-            }
-        } else {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            isoDateStr = today.toISOString();
-        }
-
-        return isoDateStr;
     }
 
     connectedCallback() {
@@ -390,12 +429,17 @@ export class HomeMaintenancePanel extends LitElement {
         this.loadData();
     }
 
+    // --- Render ---
+
     render() {
         if (!this.hass) return html``;
 
         if (!this.tasks || !this.tags) {
-            return html`<p>${localize('common.loading', this.hass.language)}</p>`;
+            return html`<p class="loading">${localize('common.loading', this.hass.language)}</p>`;
         }
+
+        const filtered = this._filteredTasks;
+        const groups = this._groupTasks(filtered);
 
         return html`
             <div class="header">
@@ -404,34 +448,100 @@ export class HomeMaintenancePanel extends LitElement {
                     <div class="main-title">
                         ${this.config?.options.sidebar_title}
                     </div>
-                    <div class="version">
-                        v${VERSION}
-                    </div>
+                    <div class="version">v${VERSION}</div>
                 </div>
             </div>
 
             <div class="view">
-                <ha-card
-                    header="${localize('panel.cards.new.title', this.hass.language)}"
-                    class="card-new"
-                >
-                    <div class="card-content">${this.renderForm()}</div>
-                </ha-card>
+                <!-- Search and filter bar -->
+                <div class="filter-bar">
+                    <div class="search-box">
+                        <ha-svg-icon .path=${mdiMagnify}></ha-svg-icon>
+                        <input
+                            type="text"
+                            .value=${this._searchQuery}
+                            @input=${(e: Event) => this._searchQuery = (e.target as HTMLInputElement).value}
+                            placeholder="${localize('panel.filter.search', this.hass.language)}"
+                        />
+                        ${this._searchQuery ? html`
+                            <ha-icon-button
+                                .path=${mdiClose}
+                                @click=${() => this._searchQuery = ""}
+                            ></ha-icon-button>
+                        ` : nothing}
+                    </div>
+                    ${this._uniqueAssignees.length > 0 ? html`
+                        <select
+                            class="assignee-filter"
+                            .value=${this._assigneeFilter}
+                            @change=${(e: Event) => this._assigneeFilter = (e.target as HTMLSelectElement).value}
+                        >
+                            <option value="">${localize('panel.filter.all_assignees', this.hass.language)}</option>
+                            ${this._uniqueAssignees.map(a => html`
+                                <option value=${a} ?selected=${this._assigneeFilter === a}>${this._getPersonName(a)}</option>
+                            `)}
+                        </select>
+                    ` : nothing}
+                    <ha-icon-button
+                        class="add-button"
+                        .path=${mdiPlus}
+                        @click=${() => this._showCreateForm = !this._showCreateForm}
+                        title="${localize('panel.cards.new.actions.add_task', this.hass.language)}"
+                    ></ha-icon-button>
+                </div>
 
-                <ha-card
-                    header="${localize('panel.cards.current.title', this.hass.language)}"
-                    class="card-current"
-                >
-                    <div class="card-content">${this.renderTasks()}</div>
-                </ha-card>
+                <!-- Create task form (collapsible) -->
+                ${this._showCreateForm ? html`
+                    <ha-card class="card-new">
+                        <div class="card-header">${localize('panel.cards.new.title', this.hass.language)}</div>
+                        <div class="card-content">${this.renderForm()}</div>
+                    </ha-card>
+                ` : nothing}
+
+                <!-- Task groups -->
+                ${groups.overdue.length > 0 ? html`
+                    <div class="task-group">
+                        <div class="group-header group-overdue">
+                            <span class="group-dot dot-overdue"></span>
+                            ${localize('panel.groups.overdue', this.hass.language)}
+                            <span class="group-count">(${groups.overdue.length})</span>
+                        </div>
+                        ${groups.overdue.map(t => this.renderTaskCard(t))}
+                    </div>
+                ` : nothing}
+
+                ${groups.due_soon.length > 0 ? html`
+                    <div class="task-group">
+                        <div class="group-header group-due-soon">
+                            <span class="group-dot dot-due-soon"></span>
+                            ${localize('panel.groups.due_soon', this.hass.language)}
+                            <span class="group-count">(${groups.due_soon.length})</span>
+                        </div>
+                        ${groups.due_soon.map(t => this.renderTaskCard(t))}
+                    </div>
+                ` : nothing}
+
+                ${groups.upcoming.length > 0 ? html`
+                    <div class="task-group">
+                        <div class="group-header group-upcoming">
+                            <span class="group-dot dot-upcoming"></span>
+                            ${localize('panel.groups.upcoming', this.hass.language)}
+                            <span class="group-count">(${groups.upcoming.length})</span>
+                        </div>
+                        ${groups.upcoming.map(t => this.renderTaskCard(t))}
+                    </div>
+                ` : nothing}
+
+                ${filtered.length === 0 ? html`
+                    <div class="empty-state">${localize('common.no_tasks', this.hass.language)}</div>
+                ` : nothing}
             </div>
 
             ${this.renderEditDialog()}
-            ${this.renderActionsMenu()}
         `;
     }
 
-    renderForm() {
+    renderForm(): TemplateResult {
         if (!this.hass) return html``;
 
         return html`
@@ -441,7 +551,7 @@ export class HomeMaintenancePanel extends LitElement {
                 .computeLabel=${this._computeLabel.bind(this)}
                 .computeHelper=${this._computeHelper.bind(this)}
                 .data=${this._formData}
-                @value-changed=${(e: CustomEvent) => this._handleFormValueChanged(e)}
+                @value-changed=${(e: CustomEvent) => this._formData = { ...this._formData, ...e.detail.value }}
             ></ha-form>
 
             <ha-expansion-panel
@@ -455,11 +565,14 @@ export class HomeMaintenancePanel extends LitElement {
                     .schema=${this._advancedSchema}
                     .computeLabel=${this._computeLabel.bind(this)}
                     .computeHelper=${this._computeHelper.bind(this)}
-                    @value-changed=${(e: CustomEvent) => this._handleFormValueChanged(e)}
+                    @value-changed=${(e: CustomEvent) => this._formData = { ...this._formData, ...e.detail.value }}
                 ></ha-form>
             </ha-expansion-panel>
 
-            <div class="form-field">
+            <div class="form-actions">
+                <mwc-button @click=${() => { this._showCreateForm = false; this._formData = emptyFormData(); }}>
+                    ${localize('panel.dialog.edit_task.actions.cancel', this.hass.language)}
+                </mwc-button>
                 <mwc-button @click=${this._handleAddTaskClick}>
                     ${localize('panel.cards.new.actions.add_task', this.hass.language)}
                 </mwc-button>
@@ -467,34 +580,101 @@ export class HomeMaintenancePanel extends LitElement {
         `;
     }
 
-    renderTasks() {
-        if (!this.hass) return html``;
-
-        if (!this.tasks || this.tasks.length === 0) {
-            return html`<span>${localize('common.no_tasks', this.hass!.language)}</span>`;
-        }
+    renderTaskCard(ct: ComputedTask): TemplateResult {
+        const task = ct.raw;
+        const isExpanded = this._expandedTasks.has(task.id);
+        const statusClass = ct.status;
 
         return html`
-            <div class="table-wrapper">
-                <ha-data-table
-                    .hass=${this.hass}
-                    .columns=${this._columnsToDisplay}
-                    .data=${this._rows}
-                    .narrow=${this.narrow}
-                    auto-height
-                    id="tasks-table"
-                    class="tasks-table"
-                    clickable
-                >
-                </ha-data-table>
+            <div class="task-card ${statusClass}">
+                <div class="task-card-main" @click=${() => this._toggleExpand(task.id)}>
+                    <div class="task-left">
+                        ${task.icon ? html`<ha-icon class="task-icon" .icon=${task.icon}></ha-icon>` : nothing}
+                        <div class="task-info">
+                            <div class="task-title">${task.title}</div>
+                            <div class="task-meta">
+                                <span class="task-interval">${this._getIntervalLabel(task)}</span>
+                                ${task.assigned_to ? html`
+                                    <span class="task-assignee">${this._getPersonName(task.assigned_to)}</span>
+                                ` : nothing}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="task-right">
+                        <div class="task-due-info">
+                            <span class="due-date">${formatDateNumeric(ct.nextDue, this.hass!.locale)}</span>
+                            <span class="due-days ${statusClass}">${this._formatDaysLabel(ct.daysUntilDue)}</span>
+                        </div>
+                        <div class="task-actions">
+                            <ha-icon-button
+                                .path=${mdiCheckCircleOutline}
+                                @click=${(e: Event) => { e.stopPropagation(); this._handleCompleteTaskClick(task.id); }}
+                                title="${localize('panel.cards.current.actions.complete', this.hass!.language)}"
+                            ></ha-icon-button>
+                            <ha-icon-button
+                                .path=${mdiPencil}
+                                @click=${(e: Event) => { e.stopPropagation(); this._handleOpenEditDialogClick(task.id); }}
+                                title="${localize('panel.cards.current.actions.edit', this.hass!.language)}"
+                            ></ha-icon-button>
+                            <ha-icon-button
+                                .path=${mdiDelete}
+                                @click=${(e: Event) => { e.stopPropagation(); this._handleRemoveTaskClick(task.id); }}
+                                title="${localize('panel.cards.current.actions.remove', this.hass!.language)}"
+                            ></ha-icon-button>
+                            <ha-icon-button
+                                .path=${isExpanded ? mdiChevronUp : mdiChevronDown}
+                                @click=${(e: Event) => { e.stopPropagation(); this._toggleExpand(task.id); }}
+                            ></ha-icon-button>
+                        </div>
+                    </div>
+                </div>
+
+                ${isExpanded ? html`
+                    <div class="task-expanded">
+                        ${task.notes ? html`
+                            <div class="task-section">
+                                <div class="section-label">${localize('panel.cards.new.fields.notes.heading', this.hass!.language)}</div>
+                                <div class="section-content notes-content">${task.notes}</div>
+                            </div>
+                        ` : nothing}
+
+                        <div class="task-section">
+                            <div class="section-label">${localize('panel.detail.last_performed', this.hass!.language)}</div>
+                            <div class="section-content">
+                                ${task.last_performed
+                                    ? formatDateNumeric(new Date(this.computeISODate(task.last_performed)), this.hass!.locale)
+                                    : "-"}
+                            </div>
+                        </div>
+
+                        ${task.completion_history && task.completion_history.length > 0 ? html`
+                            <div class="task-section">
+                                <div class="section-label">${localize('panel.detail.history', this.hass!.language)}</div>
+                                <div class="history-list">
+                                    ${task.completion_history.slice().reverse().map((record: CompletionRecord) => html`
+                                        <div class="history-item">
+                                            <span class="history-date">
+                                                ${formatDateNumeric(new Date(record.timestamp), this.hass!.locale)}
+                                            </span>
+                                            ${record.completed_by ? html`
+                                                <span class="history-who">${record.completed_by}</span>
+                                            ` : nothing}
+                                            ${record.note ? html`
+                                                <span class="history-note">${record.note}</span>
+                                            ` : nothing}
+                                        </div>
+                                    `)}
+                                </div>
+                            </div>
+                        ` : nothing}
+                    </div>
+                ` : nothing}
             </div>
         `;
     }
 
-    renderEditDialog() {
-        if (!this.hass) return html``;
-
-        if (!this._editingTaskId) return html``;
+    renderEditDialog(): TemplateResult {
+        if (!this.hass || !this._editingTaskId) return html``;
 
         return html`
             <ha-dialog
@@ -508,7 +688,7 @@ export class HomeMaintenancePanel extends LitElement {
                     .computeLabel=${this._computeEditLabel.bind(this)}
                     .computeHelper=${this._computeEditHelper.bind(this)}
                     .data=${this._editFormData}
-                    @value-changed=${(e: CustomEvent) => this._handleEditFormValueChanged(e)}
+                    @value-changed=${(e: CustomEvent) => this._editFormData = { ...this._editFormData, ...e.detail.value }}
                 ></ha-form>
 
                 <mwc-button slot="secondaryAction" @click=${() => (this._editingTaskId = null)}>
@@ -521,63 +701,68 @@ export class HomeMaintenancePanel extends LitElement {
         `;
     }
 
-    renderActionsMenu() {
-        if (!this.hass) return html``;
+    // --- Event handlers ---
 
-        return html`
-            <ha-md-menu id="actions-menu" positioning="fixed">
-                <ha-md-menu-item
-                    @click=${() => {
-                if (this._selectedTaskId) {
-                    this._handleOpenEditDialogClick(this._selectedTaskId);
-                }
-            }}
-                >
-                    <ha-svg-icon slot="start" path=${mdiPencil}></ha-svg-icon>
-                    ${localize('panel.cards.current.actions.edit', this.hass!.language)}
-                </ha-md-menu-item>
-                <ha-md-menu-item
-                    @click=${() => {
-                if (this._selectedTaskId) {
-                    this._handleRemoveTaskClick(this._selectedTaskId);
-                }
-            }}
-                >
-                    <ha-svg-icon slot="start" path=${mdiDelete}></ha-svg-icon>
-                    ${localize('panel.cards.current.actions.remove', this.hass!.language)}
-                </ha-md-menu-item>
-            </ha-md-menu>
-        `;
+    private _toggleExpand(taskId: string) {
+        const next = new Set(this._expandedTasks);
+        if (next.has(taskId)) {
+            next.delete(taskId);
+        } else {
+            next.add(taskId);
+        }
+        this._expandedTasks = next;
     }
 
     private async _handleAddTaskClick() {
-        const { title, interval_value, interval_type, last_performed, tag, icon, label } = this._formData;
+        const { title, schedule_type, interval_value, interval_type, last_performed, next_due_date, annual_recurrence, tag, icon, label, notes, assigned_to, calendar_entity, calendar_keyword, dst_trigger } = this._formData;
 
-        if (!title?.trim() || !interval_value || !interval_type) {
-            const msg = localize("panel.cards.new.alerts.required", this.hass!.language);
-            alert(msg);
+        if (!title?.trim()) {
+            alert(localize("panel.cards.new.alerts.required", this.hass!.language));
+            return;
+        }
+
+        if (schedule_type === "fixed_date" && !next_due_date) {
+            alert(localize("panel.cards.new.alerts.required", this.hass!.language));
+            return;
+        }
+
+        if (schedule_type !== "fixed_date" && (!interval_value || !interval_type)) {
+            alert(localize("panel.cards.new.alerts.required", this.hass!.language));
             return;
         }
 
         const payload: Record<string, any> = {
             title: title.trim(),
-            interval_value,
-            interval_type,
-            last_performed: this.computeISODate(last_performed),
+            schedule_type: schedule_type || "interval",
             tag_id: tag?.trim() || undefined,
             icon: icon?.trim() || "mdi:calendar-check",
+            notes: notes?.trim() || undefined,
+            assigned_to: assigned_to?.trim() || undefined,
+            calendar_entity: calendar_entity?.trim() || undefined,
+            calendar_keyword: calendar_keyword?.trim() || undefined,
+            dst_trigger: dst_trigger || false,
             labels: label ?? [],
         };
+
+        if (schedule_type === "fixed_date") {
+            payload.next_due_date = this.computeISODate(next_due_date);
+            payload.annual_recurrence = annual_recurrence || false;
+            payload.last_performed = last_performed ? this.computeISODate(last_performed) : undefined;
+        } else {
+            payload.interval_value = interval_value;
+            payload.interval_type = interval_type;
+            payload.last_performed = this.computeISODate(last_performed);
+        }
 
         try {
             await saveTask(this.hass!, payload);
             await this.resetForm();
+            this._showCreateForm = false;
         } catch (error) {
             console.error("Failed to add task:", error);
-            const msg = localize('panel.cards.new.alerts.error', this.hass!.language)
-            alert(msg);
+            alert(localize('panel.cards.new.alerts.error', this.hass!.language));
         }
-    };
+    }
 
     private async _handleCompleteTaskClick(id: string) {
         try {
@@ -599,12 +784,20 @@ export class HomeMaintenancePanel extends LitElement {
 
             this._editFormData = {
                 title: task.title,
+                schedule_type: task.schedule_type || "interval",
                 interval_value: task.interval_value,
                 interval_type: task.interval_type,
                 last_performed: task.last_performed ?? "",
+                next_due_date: task.next_due_date ?? "",
+                annual_recurrence: task.annual_recurrence ?? false,
                 icon: task.icon ?? "",
                 label: labels.map((l) => l.label_id),
                 tag: task.tag_id ?? "",
+                notes: task.notes ?? "",
+                assigned_to: task.assigned_to ?? "",
+                calendar_entity: task.calendar_entity ?? "",
+                calendar_keyword: task.calendar_keyword ?? "",
+                dst_trigger: task.dst_trigger ?? false,
             };
 
             await this.updateComplete;
@@ -616,17 +809,35 @@ export class HomeMaintenancePanel extends LitElement {
     private async _handleSaveEditClick() {
         if (!this._editingTaskId) return;
 
-        const lastPerformedISO = this.computeISODate(this._editFormData.last_performed);
-        if (!lastPerformedISO) return;
+        const scheduleType = this._editFormData.schedule_type || "interval";
 
         const updates: Record<string, any> = {
             title: this._editFormData.title.trim(),
-            interval_value: Number(this._editFormData.interval_value),
-            interval_type: this._editFormData.interval_type,
-            last_performed: lastPerformedISO,
+            schedule_type: scheduleType,
             icon: this._editFormData.icon?.trim() || "mdi:calendar-check",
+            notes: this._editFormData.notes?.trim() || null,
+            assigned_to: this._editFormData.assigned_to?.trim() || null,
+            calendar_entity: this._editFormData.calendar_entity?.trim() || null,
+            calendar_keyword: this._editFormData.calendar_keyword?.trim() || null,
+            dst_trigger: this._editFormData.dst_trigger || false,
             labels: this._editFormData.label,
         };
+
+        if (scheduleType === "fixed_date") {
+            updates.next_due_date = this.computeISODate(this._editFormData.next_due_date);
+            updates.annual_recurrence = this._editFormData.annual_recurrence || false;
+            updates.last_performed = this._editFormData.last_performed
+                ? this.computeISODate(this._editFormData.last_performed)
+                : this.computeISODate("");
+            updates.interval_value = 0;
+            updates.interval_type = "days";
+        } else {
+            const lastPerformedISO = this.computeISODate(this._editFormData.last_performed);
+            if (!lastPerformedISO) return;
+            updates.interval_value = Number(this._editFormData.interval_value);
+            updates.interval_type = this._editFormData.interval_type;
+            updates.last_performed = lastPerformedISO;
+        }
 
         if (this._editFormData.tag && this._editFormData.tag.trim() !== "") {
             updates.tag_id = this._editFormData.tag.trim();
@@ -634,15 +845,10 @@ export class HomeMaintenancePanel extends LitElement {
             updates.tag_id = null;
         }
 
-        const payload = {
-            task_id: this._editingTaskId,
-            updates,
-        };
-
         try {
-            await updateTask(this.hass!, payload);
+            await updateTask(this.hass!, { task_id: this._editingTaskId, updates });
             this._editingTaskId = null;
-            await this.resetEditForm();
+            this._editFormData = emptyFormData();
             await this.loadData();
         } catch (e) {
             console.error("Failed to update task:", e);
@@ -650,8 +856,7 @@ export class HomeMaintenancePanel extends LitElement {
     }
 
     private async _handleRemoveTaskClick(id: string) {
-        const msg = localize('panel.cards.current.confirm_remove', this.hass!.language)
-        if (!confirm(msg)) return;
+        if (!confirm(localize('panel.cards.current.confirm_remove', this.hass!.language))) return;
         try {
             await removeTask(this.hass!, id);
             await this.loadData();
@@ -667,26 +872,7 @@ export class HomeMaintenancePanel extends LitElement {
         }
     }
 
-    private _handleFormValueChanged(ev: CustomEvent) {
-        this._formData = { ...this._formData, ...ev.detail.value };
-    }
-
-    private _handleEditFormValueChanged(ev: CustomEvent) {
-        this._editFormData = { ...this._editFormData, ...ev.detail.value };
-    }
-
-    private _handleShowMenu(taskId: string, ev: Event) {
-        this._selectedTaskId = taskId;
-
-        if (!this._actionsMenu) {
-            return;
-        }
-
-        this._actionsMenu.anchorElement = ev.currentTarget as HTMLElement;
-        this._actionsMenu.show();
-
-        ev.stopPropagation();
-    } static styles = commonStyle;
+    static styles = panelStyles;
 }
 
 customElements.define("home-maintenance-panel", HomeMaintenancePanel);

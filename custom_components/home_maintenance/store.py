@@ -29,6 +29,15 @@ class HomeMaintenanceTask:
     last_performed: str = attr.ib()
     tag_id: str | None = attr.ib(default=None)
     icon: str | None = attr.ib(default=None)
+    notes: str | None = attr.ib(default=None)
+    completion_history: list = attr.ib(factory=list)
+    assigned_to: str | None = attr.ib(default=None)
+    schedule_type: str = attr.ib(default="interval")  # "interval" or "fixed_date"
+    next_due_date: str | None = attr.ib(default=None)  # ISO date for fixed_date tasks
+    annual_recurrence: bool = attr.ib(default=False)
+    calendar_entity: str | None = attr.ib(default=None)  # HA calendar entity_id
+    calendar_keyword: str | None = attr.ib(default=None)  # keyword to match in events
+    dst_trigger: bool = attr.ib(default=False)  # mark due on DST change
 
 
 class TaskStore:
@@ -179,9 +188,13 @@ class TaskStore:
         self._save()
 
     def update_last_performed(
-        self, task_id: str, performed_date: datetime | None = None
+        self,
+        task_id: str,
+        performed_date: datetime | None = None,
+        completed_by: str | None = None,
+        completion_note: str | None = None,
     ) -> None:
-        """Update a task's last performed date."""
+        """Update a task's last performed date and append to history."""
         entity = self.hass.data[const.DOMAIN]["entities"].get(task_id)
         task = self._tasks.get(task_id)
 
@@ -195,8 +208,37 @@ class TaskStore:
             hour=0, minute=0, second=0, microsecond=0
         ).isoformat()
 
+        # Append completion history record (cap at 20 entries)
+        history_record = {
+            "timestamp": dt_util.now().isoformat(),
+            "completed_by": completed_by,
+            "note": completion_note,
+        }
+        task.completion_history.append(history_record)
+        if len(task.completion_history) > 20:
+            task.completion_history = task.completion_history[-20:]
+        entity.task["completion_history"] = list(task.completion_history)
+
         entity.task["last_performed"] = performed_date_str
         task.last_performed = performed_date_str
+
+        # Clear any calendar/DST triggers on completion
+        entity.task.pop("_calendar_triggered", None)
+        entity.task.pop("_dst_triggered", None)
+
+        # For fixed_date tasks with annual recurrence, advance to next year
+        if task.schedule_type == "fixed_date" and task.annual_recurrence and task.next_due_date:
+            from dateutil.relativedelta import relativedelta as rd
+
+            current_due = dt_util.parse_datetime(task.next_due_date)
+            if current_due is not None:
+                next_year_due = current_due + rd(years=1)
+                next_due_str = next_year_due.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                ).isoformat()
+                task.next_due_date = next_due_str
+                entity.task["next_due_date"] = next_due_str
+
         self.hass.async_create_task(entity.async_update_ha_state(force_refresh=True))
         self._save()
 
