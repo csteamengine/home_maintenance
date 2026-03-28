@@ -5,6 +5,8 @@
   "main": "main.js",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --outfile=dist/main.js --format=esm --target=es2020 --minify",
+    "build:card": "esbuild src/todo-card.ts --bundle --outfile=dist/todo-card.js --format=esm --target=es2020 --minify",
+    "build:all": "npm run build && npm run build:card",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
