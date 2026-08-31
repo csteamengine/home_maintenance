@@ -392,6 +392,26 @@ export const panelStyles = css`
             min-width: unset;
         }
     }
+
+    /* Action buttons.
+       Colours come from theme variables, not literals, so they track whatever
+       theme is active (currently ios-dark-mode-* => orange accent).
+       --mdc-theme-primary is still honoured in HA 2026.8 (379 refs). */
+    /* Accent TEXT button, deliberately not appearance="filled": a filled
+       ha-button paints its background with the accent, and setting the label
+       to the same accent made it invisible - which looked like the Save
+       button had gone missing entirely. */
+    ha-button.hm-btn-accent {
+        --mdc-theme-primary: var(--primary-color);
+        --ha-button-text-color: var(--primary-color);
+        color: var(--primary-color);
+        font-weight: 600;
+    }
+    ha-button.hm-btn-muted {
+        --mdc-theme-primary: var(--secondary-text-color);
+        --ha-button-text-color: var(--secondary-text-color);
+        color: var(--secondary-text-color);
+    }
 `;
 
 // Keep backward compat export for any code that might reference the old name

@@ -570,12 +570,12 @@ export class HomeMaintenancePanel extends LitElement {
             </ha-expansion-panel>
 
             <div class="form-actions">
-                <mwc-button @click=${() => { this._showCreateForm = false; this._formData = emptyFormData(); }}>
+                <ha-button class="hm-btn-muted" @click=${() => { this._showCreateForm = false; this._formData = emptyFormData(); }}>
                     ${localize('panel.dialog.edit_task.actions.cancel', this.hass.language)}
-                </mwc-button>
-                <mwc-button @click=${this._handleAddTaskClick}>
+                </ha-button>
+                <ha-button class="hm-btn-accent" @click=${this._handleAddTaskClick}>
                     ${localize('panel.cards.new.actions.add_task', this.hass.language)}
-                </mwc-button>
+                </ha-button>
             </div>
         `;
     }
@@ -691,12 +691,18 @@ export class HomeMaintenancePanel extends LitElement {
                     @value-changed=${(e: CustomEvent) => this._editFormData = { ...this._editFormData, ...e.detail.value }}
                 ></ha-form>
 
-                <mwc-button slot="secondaryAction" @click=${() => (this._editingTaskId = null)}>
-                    ${localize('panel.dialog.edit_task.actions.cancel', this.hass.language)}
-                </mwc-button>
-                <mwc-button slot="primaryAction" @click=${this._handleSaveEditClick}>
-                    ${localize('panel.dialog.edit_task.actions.save', this.hass.language)}
-                </mwc-button>
+                <!-- HA 2026.8 renders dialog actions only inside
+                     <ha-dialog-footer slot="footer">. Buttons placed directly
+                     in ha-dialog with slot="primaryAction" are dropped, which
+                     is why Save/Cancel vanished from this dialog. -->
+                <ha-dialog-footer slot="footer">
+                    <ha-button class="hm-btn-muted" slot="secondaryAction" @click=${() => (this._editingTaskId = null)}>
+                        ${localize('panel.dialog.edit_task.actions.cancel', this.hass.language)}
+                    </ha-button>
+                    <ha-button class="hm-btn-accent" slot="primaryAction" @click=${this._handleSaveEditClick}>
+                        ${localize('panel.dialog.edit_task.actions.save', this.hass.language)}
+                    </ha-button>
+                </ha-dialog-footer>
             </ha-dialog>
         `;
     }
