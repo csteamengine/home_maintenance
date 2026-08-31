@@ -39,6 +39,11 @@ interface CardConfig {
     due_soon_days?: number;
     max_items?: number;
     show_search?: boolean;
+    /** Cap the card's height and scroll the task list inside it.
+     *  Number = px, or any CSS length ("40vh"). Unset = grow to fit content.
+     *  Needed because a dashboard's grid_options.rows does NOT constrain this
+     *  card, so height:100% has no parent height to resolve against. */
+    max_height?: number | string;
 }
 
 const DEFAULT_CONFIG: CardConfig = {
@@ -74,7 +79,29 @@ class HomeMaintenanceTodoCard extends LitElement {
     }
 
     getCardSize() {
+        // Legacy masonry sizing.
         return 3 + this._tasks.length;
+    }
+
+    /**
+     * Sections-view sizing (HA 2024.11+).
+     *
+     * Without this the card never declares that it participates in the grid,
+     * so Home Assistant lets it auto-size and any grid_options.rows set in a
+     * dashboard is silently ignored - the card then grows with the task list
+     * and pushes the whole view taller.
+     *
+     * Declaring it makes `rows` authoritative; combined with height:100% on
+     * :host and ha-card, the task list scrolls inside the assigned box
+     * instead of overflowing it.
+     */
+    getGridOptions() {
+        return {
+            columns: 12,     // full width of its section by default
+            min_columns: 6,
+            rows: 6,         // sensible default; the dashboard can override
+            min_rows: 3,
+        };
     }
 
     connectedCallback() {
@@ -312,7 +339,11 @@ class HomeMaintenanceTodoCard extends LitElement {
         const upcoming = allTasks.filter(t => t.status === "upcoming");
 
         return html`
-            <ha-card>
+            <ha-card style=${this._config.max_height
+                ? `max-height:${typeof this._config.max_height === "number"
+                    ? this._config.max_height + "px"
+                    : this._config.max_height};`
+                : ""}>
                 ${this._config.title ? html`
                     <div class="card-header">
                         <span class="title">${this._config.title}</span>
@@ -833,6 +864,38 @@ class HomeMaintenanceTodoCard extends LitElement {
             .search-box {
                 min-width: unset;
             }
+        }
+
+        /* Scroll INSIDE the card rather than growing the page.
+           On the wall panel every view must fit 1920x1080 with no outer
+           scroll; a card that grows with task count breaks that. The card
+           is given a fixed height by grid_options.rows in the dashboard, so
+           this makes the list take the remaining space and scroll itself. */
+        :host {
+            display: block;
+            height: 100%;
+        }
+        ha-card {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden;
+        }
+        .card-header {
+            flex: 0 0 auto;
+        }
+        .task-list {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+        /* Slim scrollbar - a full-width one looks wrong on a touch panel. */
+        .task-list::-webkit-scrollbar { width: 6px; }
+        .task-list::-webkit-scrollbar-thumb {
+            background: var(--divider-color, rgba(255,255,255,.25));
+            border-radius: 3px;
         }
     `;
 }
