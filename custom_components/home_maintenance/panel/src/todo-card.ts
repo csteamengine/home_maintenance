@@ -280,17 +280,28 @@ class HomeMaintenanceTodoCard extends LitElement {
 
     // --- Actions ---
 
-    private async _completeTask(taskId: string) {
+    /**
+     * Toggle completion. Passing undo=true reverses the most recent
+     * completion: the backend pops the last history record and restores the
+     * last_performed it captured, so an accidental tap is recoverable
+     * without editing the task by hand.
+     */
+    private async _completeTask(taskId: string, undo = false) {
         if (this._completing.has(taskId)) return;
         const next = new Set(this._completing);
         next.add(taskId);
         this._completing = next;
 
         try {
-            await this.hass.callWS({ type: "home_maintenance/complete_task", task_id: taskId });
+            await this.hass.callWS({
+                type: undo
+                    ? "home_maintenance/uncomplete_task"
+                    : "home_maintenance/complete_task",
+                task_id: taskId,
+            });
             await this._loadTasks();
         } catch (e) {
-            console.error("Failed to complete task:", e);
+            console.error(undo ? "Failed to undo completion:" : "Failed to complete task:", e);
         }
 
         const after = new Set(this._completing);
@@ -453,11 +464,11 @@ class HomeMaintenanceTodoCard extends LitElement {
                         </div>
                         <div class="task-actions">
                             <ha-icon-button
-                                @click=${(e: Event) => { e.stopPropagation(); this._completeTask(task.id); }}
-                                title="Complete"
+                                @click=${(e: Event) => { e.stopPropagation(); this._completeTask(task.id, ct.completedToday); }}
+                                title=${ct.completedToday ? "Undo completion" : "Complete"}
                                 ?disabled=${isCompleting}
                             >
-                                <ha-icon icon="mdi:check-circle-outline"></ha-icon>
+                                <ha-icon icon=${ct.completedToday ? "mdi:undo-variant" : "mdi:check-circle-outline"}></ha-icon>
                             </ha-icon-button>
                             <ha-icon-button
                                 @click=${(e: Event) => { e.stopPropagation(); this._openPanel(); }}

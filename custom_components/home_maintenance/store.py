@@ -213,6 +213,9 @@ class TaskStore:
             "timestamp": dt_util.now().isoformat(),
             "completed_by": completed_by,
             "note": completion_note,
+            # Captured so undo_last_performed() can restore the exact prior
+            # value rather than inferring it from the previous completion.
+            "previous_last_performed": task.last_performed,
         }
         task.completion_history.append(history_record)
         if len(task.completion_history) > 20:
@@ -238,6 +241,61 @@ class TaskStore:
                 ).isoformat()
                 task.next_due_date = next_due_str
                 entity.task["next_due_date"] = next_due_str
+
+        self.hass.async_create_task(entity.async_update_ha_state(force_refresh=True))
+        self._save()
+
+    def undo_last_performed(self, task_id: str) -> None:
+        """Reverse the most recent completion of a task."""
+        entity = self.hass.data[const.DOMAIN]["entities"].get(task_id)
+        task = self._tasks.get(task_id)
+
+        if entity is None or task is None:
+            msg = "Task not found."
+            raise RuntimeError(msg)
+
+        if not task.completion_history:
+            return
+
+        record = task.completion_history.pop()
+        entity.task["completion_history"] = list(task.completion_history)
+
+        previous = record.get("previous_last_performed")
+        if previous is None and task.completion_history:
+            # History written before previous_last_performed existed: fall
+            # back to the completion before this one.
+            parsed = dt_util.parse_datetime(
+                task.completion_history[-1]["timestamp"]
+            )
+            if parsed is not None:
+                previous = (
+                    dt_util.as_local(parsed)
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .isoformat()
+                )
+
+        if previous:
+            task.last_performed = previous
+            entity.task["last_performed"] = previous
+
+        # Completion advances an annually-recurring fixed date by a year;
+        # undoing it has to walk that back.
+        if (
+            task.schedule_type == "fixed_date"
+            and task.annual_recurrence
+            and task.next_due_date
+        ):
+            from dateutil.relativedelta import relativedelta as rd
+
+            current_due = dt_util.parse_datetime(task.next_due_date)
+            if current_due is not None:
+                prev_due_str = (
+                    (current_due - rd(years=1))
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .isoformat()
+                )
+                task.next_due_date = prev_due_str
+                entity.task["next_due_date"] = prev_due_str
 
         self.hass.async_create_task(entity.async_update_ha_state(force_refresh=True))
         self._save()

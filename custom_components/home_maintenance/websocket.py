@@ -130,6 +130,16 @@ def websocket_complete_task(
 
 
 @callback
+def websocket_uncomplete_task(
+    hass: HomeAssistant, connection: connection.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Reverse the most recent completion of a task."""
+    store = hass.data[DOMAIN].get("store")
+    store.undo_last_performed(msg["task_id"])
+    connection.send_result(msg["id"], {"success": True})
+
+
+@callback
 def websocket_remove_task(
     hass: HomeAssistant, connection: connection.ActiveConnection, msg: dict[str, Any]
 ) -> None:
@@ -236,6 +246,18 @@ async def async_register_websockets(hass: HomeAssistant) -> None:
                 vol.Required("task_id"): str,
                 vol.Optional("completed_by"): str,
                 vol.Optional("completion_note"): str,
+            }
+        ),
+    )
+
+    websocket_api.async_register_command(
+        hass,
+        "home_maintenance/uncomplete_task",
+        websocket_uncomplete_task,
+        messages.BASE_COMMAND_MESSAGE_SCHEMA.extend(
+            {
+                vol.Required("type"): "home_maintenance/uncomplete_task",
+                vol.Required("task_id"): str,
             }
         ),
     )
